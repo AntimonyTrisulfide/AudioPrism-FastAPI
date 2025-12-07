@@ -10,8 +10,8 @@ import shutil
 import traceback
 import uuid
 from typing import Optional
-from app.model import UNet
-from app.processor import ExternalPreprocessedDataset, ExternalPreprocessor
+from model import UNet
+from processor import ExternalPreprocessedDataset, ExternalPreprocessor
 
 app = FastAPI()
 
