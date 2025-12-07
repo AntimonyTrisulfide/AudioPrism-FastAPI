@@ -5,3 +5,4 @@ torch==2.3.0
 torchaudio==2.3.0
 numpy==1.26.4
 azure-storage-blob==12.19.1
+soundfile==0.12.1
