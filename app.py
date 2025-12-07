@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+import os
 import torch
 import torchaudio
 import pathlib
@@ -15,12 +16,19 @@ from processor import ExternalPreprocessedDataset, ExternalPreprocessor
 
 app = FastAPI()
 
-allowed_origins = [
+default_allowed_origins = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     "http://127.0.0.1:5000",
     "http://localhost:5000",
 ]
+
+extra_origins = os.getenv("ALLOWED_ORIGINS")
+if extra_origins:
+    parsed = [origin.strip() for origin in extra_origins.split(",") if origin.strip()]
+    allowed_origins = parsed if parsed else default_allowed_origins
+else:
+    allowed_origins = default_allowed_origins
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,16 +39,33 @@ app.add_middleware(
 )
 
 # ----------------------------- Static Files Setup ----------------------------- #
-OUTPUT_DIR = pathlib.Path("reconstructed_audio")
+OUTPUT_DIR = pathlib.Path(os.getenv("OUTPUT_DIR", "reconstructed_audio"))
 OUTPUT_DIR.mkdir(exist_ok=True)
-PUBLIC_BASE_URL = "http://127.0.0.1:8001"
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8001")
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
 # ----------------------------- Model Setup ----------------------------- #
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = UNet(in_channels=1, out_channels=16).to(device)
 
-model_path = pathlib.Path("app/model_weights.pth")
+model_path_env = os.getenv("MODEL_PATH")
+model_dir = pathlib.Path(os.getenv("MODEL_DIR", "/models"))
+model_filename = os.getenv("MODEL_FILENAME", "model_weights.pth")
+
+candidate_paths = []
+if model_path_env:
+    candidate_paths.append(pathlib.Path(model_path_env))
+candidate_paths.append((model_dir / model_filename))
+candidate_paths.append(pathlib.Path("app/model_weights.pth"))
+candidate_paths.append(pathlib.Path("model_weights.pth"))
+
+model_path = next((path for path in candidate_paths if path and path.exists()), None)
+
+if not model_path:
+    raise FileNotFoundError(
+        "Model weights not found. Set MODEL_PATH or MODEL_DIR/MODEL_FILENAME env vars or include app/model_weights.pth in the image."
+    )
+
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 
