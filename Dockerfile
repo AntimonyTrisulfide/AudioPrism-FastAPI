@@ -10,14 +10,14 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl ca-certificates libsndfile1 ffmpeg \
 	&& rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /
 
 # Install Python dependencies before copying the rest of the app for better layer caching
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Copy FastAPI source code
-COPY . /app
+COPY . /
 
 # Copy pre-downloaded model artifacts (downloaded in CI before docker build)
 ENV MODEL_DIR=/models
@@ -27,7 +27,7 @@ COPY models/ "${MODEL_DIR}/"
 
 FROM base AS final
 ENV MODEL_DIR=/models
-WORKDIR /app
+WORKDIR /
 
 EXPOSE 8001
 
