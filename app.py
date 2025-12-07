@@ -6,7 +6,6 @@ import os
 import torch
 import torchaudio
 import pathlib
-import io
 import shutil
 import traceback
 import uuid
@@ -212,10 +211,10 @@ async def infer_audio(file: UploadFile = File(...), cache_id: Optional[str] = Fo
 
     input_bytes = await file.read()
     print("File size:", len(input_bytes), "bytes")
-    input_audio, sr = torchaudio.load(io.BytesIO(input_bytes))
 
     temp_input_path = pathlib.Path(f"{track_id}.wav")
-    torchaudio.save(temp_input_path, input_audio, sr)
+    with temp_input_path.open("wb") as buffer:
+        buffer.write(input_bytes)
 
     result = inference_pipeline(temp_input_path, device, track_id)
     return JSONResponse(result)
