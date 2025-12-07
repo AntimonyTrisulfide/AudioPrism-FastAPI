@@ -1,0 +1,68 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: audioprism-fastapi
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZ_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZ_CLIENT_SECRET }}",
+              "tenantId": "${{ secrets.AZ_TENANT_ID }}",
+              "subscriptionId": "${{ secrets.AZ_SUBSCRIPTION_ID }}"
+            }
+      - name: Download model from Blob
+        env:
+          AZ_STORAGE_ACCOUNT: ${{ secrets.AZ_STORAGE_ACCOUNT }}
+          AZ_BLOB_CONTAINER: ${{ secrets.AZ_BLOB_CONTAINER }}
+          AZ_BLOB_NAME: ${{ secrets.AZ_BLOB_NAME }}
+        run: |
+          mkdir -p models
+          az storage blob download \
+            --account-name "${AZ_STORAGE_ACCOUNT}" \
+            --container-name "${AZ_BLOB_CONTAINER}" \
+            --name "${AZ_BLOB_NAME}" \
+            --file "models/${AZ_BLOB_NAME}" \
+            --auth-mode login
+      - name: Log in to Azure Container Registry
+        env:
+          AZ_ACR_NAME: ${{ secrets.AZ_ACR_NAME }}
+        run: |
+          az acr login --name "${AZ_ACR_NAME}"
+      - name: Build and push image
+        env:
+          AZ_ACR_LOGIN_SERVER: ${{ secrets.AZ_ACR_LOGIN_SERVER }}
+        run: |
+          IMAGE_TAG="${AZ_ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build -t "${IMAGE_TAG}" .
+          docker push "${IMAGE_TAG}"
+          echo "image=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+      - name: Deploy to Azure Web App
+        if: github.ref == 'refs/heads/main'
+        env:
+          AZ_WEBAPP_NAME: ${{ secrets.AZ_WEBAPP_NAME }}
+          AZ_RESOURCE_GROUP: ${{ secrets.AZ_RESOURCE_GROUP }}
+          AZ_ACR_LOGIN_SERVER: ${{ secrets.AZ_ACR_LOGIN_SERVER }}
+        run: |
+          az webapp config container set \
+            --name "${AZ_WEBAPP_NAME}" \
+            --resource-group "${AZ_RESOURCE_GROUP}" \
+            --docker-custom-image-name "${AZ_ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}" \
+            --docker-registry-server-url "https://${AZ_ACR_LOGIN_SERVER}"
