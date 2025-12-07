@@ -13,6 +13,14 @@ from typing import Optional
 from model import UNet
 from processor import ExternalPreprocessedDataset, ExternalPreprocessor
 
+
+audio_backend = os.getenv("AUDIO_BACKEND", "soundfile")
+try:
+    torchaudio.set_audio_backend(audio_backend)
+    print(f"[Audio] Using torchaudio backend: {audio_backend}")
+except RuntimeError as backend_error:
+    print(f"[Audio] Failed to set torchaudio backend '{audio_backend}': {backend_error}")
+
 app = FastAPI()
 
 default_allowed_origins = [
