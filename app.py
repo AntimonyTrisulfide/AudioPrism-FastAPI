@@ -13,6 +13,22 @@ from typing import Optional
 from model import UNet
 from processor import ExternalPreprocessedDataset, ExternalPreprocessor
 
+from datetime import datetime, timedelta
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+
+AZ_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
+AZ_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "audio-stems")
+AZ_CONN_STR = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+BLOB_URL_TTL = int(os.getenv("BLOB_URL_TTL_MINUTES", "120"))
+
+if AZ_CONN_STR:
+    blob_service = BlobServiceClient.from_connection_string(AZ_CONN_STR)
+else:
+    blob_service = BlobServiceClient(account_url=AZ_ACCOUNT_URL, credential=DefaultAzureCredential())
+container_client = blob_service.get_container_client(AZ_CONTAINER)
+container_client.create_container(exist_ok=True)
+
 
 audio_backend = os.getenv("AUDIO_BACKEND", "soundfile")
 try:
@@ -117,6 +133,8 @@ def reconstruct_and_save_audio(model, dataset, preprocessor, save_dir=OUTPUT_DIR
             full_audio = torch.cat(audio_chunks, dim=0)
             save_path = track_output_dir / f"{source_name}_reconstructed.wav"
             torchaudio.save(save_path, full_audio.unsqueeze(0), preprocessor.sr)
+            url = _upload_and_url(save_path, f"{track_name}/{save_path.name}")
+            save_path.unlink(missing_ok=True)  # remove local copy once it’s in blob storage
 
             # Build the public URL
             url = f"{PUBLIC_BASE_URL}/output/{track_name}/{source_name}_reconstructed.wav"
@@ -133,6 +151,24 @@ def reconstruct_and_save_audio(model, dataset, preprocessor, save_dir=OUTPUT_DIR
         "files": track_urls,
         "stems": primary_track["stems"],
     }
+
+def _upload_and_url(local_path: pathlib.Path, blob_name: str) -> str:
+    blob_client = container_client.get_blob_client(blob_name)
+    with local_path.open("rb") as data:
+        blob_client.upload_blob(
+            data,
+            overwrite=True,
+            content_settings={"content_type": "audio/wav"},
+            metadata={"cache_id": local_path.parent.name}
+        )
+    sas = generate_blob_sas(
+        account_name=blob_client.account_name,
+        container_name=blob_client.container_name,
+        blob_name=blob_client.blob_name,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(minutes=BLOB_URL_TTL)
+    )
+    return f"{blob_client.url}?{sas}"
 
 # ----------------------------- Inference Pipeline ----------------------------- #
 def inference_pipeline(temp_input_path, device, track_id):
