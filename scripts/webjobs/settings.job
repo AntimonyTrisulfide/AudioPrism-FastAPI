@@ -1,0 +1,4 @@
+{
+  "schedule": "0 */30 * * * *",
+  "is_singleton": true
+}
