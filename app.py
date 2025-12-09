@@ -16,7 +16,12 @@ from processor import ExternalPreprocessedDataset, ExternalPreprocessor
 from datetime import datetime, timedelta
 from azure.identity import DefaultAzureCredential
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.storage.blob import (
+    BlobServiceClient,
+    BlobSasPermissions,
+    ContentSettings,
+    generate_blob_sas,
+)
 
 AZ_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL")
 AZ_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "audio-stems")
@@ -168,8 +173,11 @@ def _upload_and_url(local_path: pathlib.Path, blob_name: str) -> str:
         blob_client.upload_blob(
             data,
             overwrite=True,
-            content_settings={"content_type": "audio/wav"},
-            metadata={"cache_id": local_path.parent.name}
+            content_settings=ContentSettings(content_type="audio/wav"),
+            metadata={
+                "cache_id": local_path.parent.name,
+                "created_at": datetime.utcnow().isoformat(),
+            }
         )
     sas = generate_blob_sas(
         account_name=blob_client.account_name,
