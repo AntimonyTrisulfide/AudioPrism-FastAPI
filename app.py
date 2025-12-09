@@ -230,6 +230,8 @@ def _get_user_delegation_key():
         return None
 
     now = datetime.utcnow()
+    if _USER_DELEGATION_KEY_EXPIRY and _USER_DELEGATION_KEY_EXPIRY.tzinfo is not None:
+        now = now.replace(tzinfo=_USER_DELEGATION_KEY_EXPIRY.tzinfo)
     if _USER_DELEGATION_KEY and _USER_DELEGATION_KEY_EXPIRY and now < (_USER_DELEGATION_KEY_EXPIRY - timedelta(minutes=5)):
         return _USER_DELEGATION_KEY
 
