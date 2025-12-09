@@ -28,8 +28,21 @@ AZ_CONTAINER = os.getenv("AZURE_STORAGE_CONTAINER", "audio-stems")
 AZ_CONN_STR = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 BLOB_URL_TTL = int(os.getenv("BLOB_URL_TTL_MINUTES", "120"))
 
+ACCOUNT_KEY = None
+if AZ_CONN_STR:
+    parts = {}
+    for segment in AZ_CONN_STR.split(";"):
+        if not segment:
+            continue
+        if "=" in segment:
+            key, value = segment.split("=", 1)
+            parts[key.strip()] = value.strip()
+    ACCOUNT_KEY = parts.get("AccountKey")
+
 blob_service = None
 container_client = None
+_USER_DELEGATION_KEY = None
+_USER_DELEGATION_KEY_EXPIRY = None
 if AZ_CONN_STR:
     blob_service = BlobServiceClient.from_connection_string(AZ_CONN_STR)
 elif AZ_ACCOUNT_URL:
@@ -179,14 +192,59 @@ def _upload_and_url(local_path: pathlib.Path, blob_name: str) -> str:
                 "created_at": datetime.utcnow().isoformat(),
             }
         )
-    sas = generate_blob_sas(
-        account_name=blob_client.account_name,
-        container_name=blob_client.container_name,
-        blob_name=blob_client.blob_name,
-        permission=BlobSasPermissions(read=True),
-        expiry=datetime.utcnow() + timedelta(minutes=BLOB_URL_TTL)
-    )
-    return f"{blob_client.url}?{sas}"
+    return _build_blob_url(blob_client)
+
+
+def _build_blob_url(blob_client):
+    expiry_time = datetime.utcnow() + timedelta(minutes=BLOB_URL_TTL)
+    sas_kwargs = {
+        "container_name": blob_client.container_name,
+        "blob_name": blob_client.blob_name,
+        "permission": BlobSasPermissions(read=True),
+        "expiry": expiry_time,
+    }
+
+    if ACCOUNT_KEY:
+        sas = generate_blob_sas(
+            account_name=blob_client.account_name,
+            account_key=ACCOUNT_KEY,
+            **sas_kwargs,
+        )
+        return f"{blob_client.url}?{sas}"
+
+    delegation_key = _get_user_delegation_key()
+    if delegation_key:
+        sas = generate_blob_sas(
+            account_name=blob_client.account_name,
+            user_delegation_key=delegation_key,
+            **sas_kwargs,
+        )
+        return f"{blob_client.url}?{sas}"
+
+    return blob_client.url
+
+
+def _get_user_delegation_key():
+    global _USER_DELEGATION_KEY, _USER_DELEGATION_KEY_EXPIRY
+    if not blob_service or ACCOUNT_KEY:
+        return None
+
+    now = datetime.utcnow()
+    if _USER_DELEGATION_KEY and _USER_DELEGATION_KEY_EXPIRY and now < (_USER_DELEGATION_KEY_EXPIRY - timedelta(minutes=5)):
+        return _USER_DELEGATION_KEY
+
+    start_time = now - timedelta(minutes=5)
+    expiry_time = now + timedelta(hours=1)
+    delegation_key = blob_service.get_user_delegation_key(start_time, expiry_time)
+    signed_expiry = delegation_key.signed_expiry
+    if signed_expiry.endswith("Z"):
+        signed_expiry = signed_expiry.replace("Z", "+00:00")
+    try:
+        _USER_DELEGATION_KEY_EXPIRY = datetime.fromisoformat(signed_expiry)
+    except ValueError:
+        _USER_DELEGATION_KEY_EXPIRY = expiry_time
+    _USER_DELEGATION_KEY = delegation_key
+    return _USER_DELEGATION_KEY
 
 # ----------------------------- Inference Pipeline ----------------------------- #
 def inference_pipeline(temp_input_path, device, track_id):
